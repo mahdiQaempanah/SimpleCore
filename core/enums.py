@@ -11,6 +11,7 @@ class OrderSide(models.TextChoices):
 
 class OrderStatus(models.TextChoices):
     WAITING = 'WAITING'
+    INITIATED = 'INITIATED'
     FILLED = 'FILLED'
     CANCELED = 'CANCELED'
 

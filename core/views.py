@@ -49,14 +49,14 @@ class OrderView(View):
             obj = Order.objects.create(**order_dict)
             if obj.is_maker():
                 obj.order_status = OrderStatus.WAITING.value
-                obj.save()
+                obj.save(update_fields=['order_status'])
                 return HttpResponse(f'Order {obj.id} created and is waiting to be filled')
             else:
                 other_side = OrderSide.BUY.value if obj.order_side == OrderSide.SELL.value else OrderSide.SELL.value
                 if obj.order_type == OrderType.MARKET.value:
                     if obj.market.get_remaining_makers_amount(other_side) < obj.primary_amount:
                         obj.order_status = OrderStatus.CANCELED.value
-                        obj.save()
+                        obj.save(update_fields=['order_status'])
                         return HttpResponse('Not enough amount', status=400)
                 obj.fill()
                 obj.save_based_remaining()
@@ -82,7 +82,8 @@ class OrderView(View):
                 'market': market,
                 'remaining_amount': decimal.Decimal(request.POST['primary_amount']),
                 'primary_amount': decimal.Decimal(request.POST['primary_amount']),
-                'price': request.POST.get('price', None)
+                'price': request.POST.get('price', None),
+                'order_status': OrderStatus.INITIATED.value
             }
             if order_dict['price'] is not None:
                 order_dict['price'] = decimal.Decimal(order_dict['price'])
