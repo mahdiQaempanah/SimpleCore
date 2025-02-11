@@ -8,6 +8,7 @@ from .enums import OrderStatus, OrderType, OrderSide
 from .models import Market, Order, Trade
 from django.views import View
 from django.http import HttpResponse, HttpRequest
+from django.db import DatabaseError, transaction
 
 
 class MarketView(View):
@@ -74,7 +75,6 @@ class OrderView(View):
 
     def make_order_dict(self, request: HttpRequest):
         try:
-            print(request.POST)
             market = Market.objects.get(pk=int(request.POST['market']))
             order_dict = {
                 'order_type': request.POST['order_type'],

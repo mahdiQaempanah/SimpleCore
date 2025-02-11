@@ -1,5 +1,6 @@
 from django.db import models
 from core.enums import *
+from django.db import DatabaseError, transaction
 
 class Market(models.Model):
     symbol = models.CharField(max_length=120, unique=True)
@@ -48,6 +49,27 @@ class Order(models.Model):
             return self.price <= other_order.price
         return self.price >= other_order.price
 
+    @transaction.atomic
+    def fill_atomic(self):
+        other_side = OrderSide.BUY.value if self.order_side == OrderSide.SELL.value else OrderSide.SELL.value
+        best_other_side_maker = self.market.get_best_maker_obj_or_none(other_side)
+        amount = 0
+        if self.can_trade(best_other_side_maker):
+            if self.remaining_amount >= best_other_side_maker.remaining_amount:
+                amount = best_other_side_maker.remaining_amount
+                self.remaining_amount -= best_other_side_maker.remaining_amount
+                self.save(update_fields=['remaining_amount'])
+                best_other_side_maker.remaining_amount = 0
+                best_other_side_maker.order_status = OrderStatus.FILLED.value
+            else:
+                amount = self.remaining_amount
+                best_other_side_maker.remaining_amount -= self.remaining_amount
+                self.remaining_amount = 0
+                self.order_status = OrderStatus.FILLED.value
+        best_other_side_maker.save()
+        Trade.objects.create(maker=best_other_side_maker, taker=self, amount=amount,
+                             price=best_other_side_maker.price)
+
     def fill(self):
         other_side = OrderSide.BUY.value if self.order_side == OrderSide.SELL.value else OrderSide.SELL.value
         while self.remaining_amount > 0:
@@ -55,15 +77,24 @@ class Order(models.Model):
             if not self.can_trade(best_other_side_maker):
                 break
             if self.remaining_amount >= best_other_side_maker.remaining_amount:
-                self.remaining_amount -= best_other_side_maker.remaining_amount
-                best_other_side_maker.remaining_amount = 0
-                best_other_side_maker.order_status = OrderStatus.FILLED.value
+                with transaction.atomic():
+                    amount = best_other_side_maker.remaining_amount
+                    self.remaining_amount -= best_other_side_maker.remaining_amount
+                    self.save(update_fields=['remaining_amount'])
+                    best_other_side_maker.remaining_amount = 0
+                    best_other_side_maker.order_status = OrderStatus.FILLED.value
+                    best_other_side_maker.save()
+                    Trade.objects.create(maker=best_other_side_maker, taker=self, amount=amount,
+                                         price=best_other_side_maker.price)
             else:
-                best_other_side_maker.remaining_amount -= self.remaining_amount
-                self.remaining_amount = 0
-                self.order_status = OrderStatus.FILLED.value
-            best_other_side_maker.save()
-            Trade.objects.create(maker=best_other_side_maker, taker=self, amount=self.remaining_amount, price=best_other_side_maker.price)
+                with transaction.atomic():
+                    amount = self.remaining_amount
+                    best_other_side_maker.remaining_amount -= self.remaining_amount
+                    self.remaining_amount = 0
+                    self.order_status = OrderStatus.FILLED.value
+                    best_other_side_maker.save(update_fields=['remaining_amount', 'order_status'])
+                    Trade.objects.create(maker=best_other_side_maker, taker=self, amount=amount,
+                                         price=best_other_side_maker.price)
 
 
     def save_based_remaining(self):
@@ -71,7 +102,7 @@ class Order(models.Model):
             self.order_status = OrderStatus.FILLED.value
         else:
             self.order_status = OrderStatus.WAITING.value
-        self.save()
+        self.save(update_fields=['remaining_amount', 'order_status'])
 
 
 class Trade(models.Model):
