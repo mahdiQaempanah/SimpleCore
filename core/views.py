@@ -9,6 +9,7 @@ from .models import Market, Order, Trade
 from django.views import View
 from django.http import HttpResponse, HttpRequest
 from django.db import DatabaseError, transaction
+from .tasks import *
 
 
 class MarketView(View):
@@ -47,25 +48,9 @@ class OrderView(View):
             order_dict = self.make_order_dict(request)
             if order_dict is None:
                 return HttpResponse('Invalid request', status=400)
-            obj = Order.objects.create(**order_dict)
-            if obj.is_maker():
-                obj.order_status = OrderStatus.WAITING.value
-                obj.save(update_fields=['order_status'])
-                return HttpResponse(f'Order {obj.id} created and is waiting to be filled')
-            else:
-                other_side = OrderSide.BUY.value if obj.order_side == OrderSide.SELL.value else OrderSide.SELL.value
-                if obj.order_type == OrderType.MARKET.value:
-                    if obj.market.get_remaining_makers_amount(other_side) < obj.primary_amount:
-                        obj.order_status = OrderStatus.CANCELED.value
-                        obj.save(update_fields=['order_status'])
-                        return HttpResponse('Not enough amount', status=400)
-                obj.fill()
-                obj.save_based_remaining()
-                if obj.remaining_amount > 0:
-                    return HttpResponse(f'Order {obj.id} partially filled')
-                else:
-                    return HttpResponse(f'Order {obj.id} filled')
-
+            result = handle_new_order.apply_async(args=[order_dict])
+            response = result.get(timeout=5)
+            return HttpResponse(response[0], status=response[1])
         except IntegrityError:
             return HttpResponse('Order already exists', status=400)
         except KeyError:
@@ -75,23 +60,18 @@ class OrderView(View):
 
     def make_order_dict(self, request: HttpRequest):
         try:
-            market = Market.objects.get(pk=int(request.POST['market']))
             order_dict = {
                 'order_type': request.POST['order_type'],
                 'order_side': request.POST['order_side'],
-                'market': market,
-                'remaining_amount': decimal.Decimal(request.POST['primary_amount']),
-                'primary_amount': decimal.Decimal(request.POST['primary_amount']),
+                'market': int(request.POST['market']),
+                'remaining_amount': request.POST['primary_amount'],
+                'primary_amount': request.POST['primary_amount'],
                 'price': request.POST.get('price', None),
                 'order_status': OrderStatus.INITIATED.value
             }
-            if order_dict['price'] is not None:
-                order_dict['price'] = decimal.Decimal(order_dict['price'])
             if order_dict['order_type'] == OrderType.LIMIT.value and order_dict['price'] is None:
                 return None
             return order_dict
-        except Market.DoesNotExist:
-            return None
         except KeyError:
             return None
         except ValueError:

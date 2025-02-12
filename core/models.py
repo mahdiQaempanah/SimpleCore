@@ -29,6 +29,11 @@ class Order(models.Model):
     remaining_amount = models.DecimalField(decimal_places=8, max_digits=20, default=0)
     price = models.DecimalField(decimal_places=8, max_digits=20, null=True, blank=True)
 
+    # class Meta:
+    #     indexes = [
+    #         models.Index(fields=['market', 'order_side', 'order_status', 'price']),
+    #     ]
+
     def is_maker(self):
         if self.order_type == OrderType.MARKET.value:
             return False
