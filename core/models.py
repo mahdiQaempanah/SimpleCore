@@ -20,6 +20,13 @@ class Market(models.Model):
                                         order_status=OrderStatus.WAITING.value).order_by('price').first()
         return Order.objects.filter(market=self, order_side=order_side, order_status=OrderStatus.WAITING.value).order_by('-price').first()
 
+    def get_order_book(self, order_side):
+        if order_side == OrderSide.SELL:
+            return Order.objects.filter(market=self, order_side = order_side, order_type=OrderType.LIMIT, order_status=OrderStatus.WAITING.value).order_by('price')
+        else:
+            return Order.objects.filter(market=self, order_side=order_side, order_type=OrderType.LIMIT,
+                                        order_status=OrderStatus.WAITING.value).order_by('-price')
+
 class Order(models.Model):
     order_type = models.CharField(choices=OrderType, max_length=10)
     order_side = models.CharField(choices=OrderSide, max_length=10)
@@ -29,10 +36,11 @@ class Order(models.Model):
     remaining_amount = models.DecimalField(decimal_places=8, max_digits=20, default=0)
     price = models.DecimalField(decimal_places=8, max_digits=20, null=True, blank=True)
 
-    # class Meta:
-    #     indexes = [
-    #         models.Index(fields=['market', 'order_side', 'order_status', 'price']),
-    #     ]
+    class Meta:
+        indexes = [
+            models.Index(fields=['market', 'order_side', 'order_status']),
+            models.Index(fields=['price']),
+        ]
 
     def is_maker(self):
         if self.order_type == OrderType.MARKET.value:
@@ -57,23 +65,25 @@ class Order(models.Model):
     @transaction.atomic
     def fill_atomic(self):
         other_side = OrderSide.BUY.value if self.order_side == OrderSide.SELL.value else OrderSide.SELL.value
-        best_other_side_maker = self.market.get_best_maker_obj_or_none(other_side)
-        amount = 0
-        if self.can_trade(best_other_side_maker):
+        while self.remaining_amount > 0:
+            best_other_side_maker = self.market.get_best_maker_obj_or_none(other_side)
+            if not self.can_trade(best_other_side_maker):
+                break
             if self.remaining_amount >= best_other_side_maker.remaining_amount:
-                amount = best_other_side_maker.remaining_amount
-                self.remaining_amount -= best_other_side_maker.remaining_amount
-                self.save(update_fields=['remaining_amount'])
-                best_other_side_maker.remaining_amount = 0
-                best_other_side_maker.order_status = OrderStatus.FILLED.value
+                    amount = best_other_side_maker.remaining_amount
+                    self.remaining_amount -= amount
+                    self.save(update_fields=['remaining_amount'])
+                    best_other_side_maker.remaining_amount = 0
+                    best_other_side_maker.order_status = OrderStatus.FILLED.value
             else:
-                amount = self.remaining_amount
-                best_other_side_maker.remaining_amount -= self.remaining_amount
-                self.remaining_amount = 0
-                self.order_status = OrderStatus.FILLED.value
-        best_other_side_maker.save()
-        Trade.objects.create(maker=best_other_side_maker, taker=self, amount=amount,
-                             price=best_other_side_maker.price)
+                    amount = self.remaining_amount
+                    best_other_side_maker.remaining_amount -= amount
+                    self.remaining_amount = 0
+                    self.order_status = OrderStatus.FILLED.value
+                    best_other_side_maker.save(update_fields=['remaining_amount', 'order_status'])
+            best_other_side_maker.save()
+            Trade.objects.create(maker=best_other_side_maker, taker=self, amount=amount,
+                                 price=best_other_side_maker.price)
 
     def fill(self):
         other_side = OrderSide.BUY.value if self.order_side == OrderSide.SELL.value else OrderSide.SELL.value

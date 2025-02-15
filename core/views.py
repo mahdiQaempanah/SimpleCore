@@ -1,4 +1,5 @@
 import decimal
+import profile
 
 from django.db import IntegrityError
 from django.shortcuts import render
@@ -7,9 +8,10 @@ from rest_framework import generics
 from .enums import OrderStatus, OrderType, OrderSide
 from .models import Market, Order, Trade
 from django.views import View
-from django.http import HttpResponse, HttpRequest
+from django.http import HttpResponse, HttpRequest, JsonResponse
 from django.db import DatabaseError, transaction
 from .tasks import *
+
 
 
 class MarketView(View):
@@ -19,44 +21,56 @@ class MarketView(View):
                 market = Market.objects.get(pk=request.GET['pk'])
                 return HttpResponse(f'Market {market.symbol}')
             except Market.DoesNotExist:
-                return HttpResponse('Market not found', status=404)
+                return JsonResponse({'message': 'Market not found'}, status=404)
         markets = Market.objects.all()
-        return HttpResponse(', '.join([market.symbol for market in markets]))
+        return JsonResponse({'markets': [market.symbol for market in markets]})
 
     def post(self, request: HttpRequest):
         try:
             market = Market.objects.create(symbol=request.POST['symbol'])
-            return HttpResponse(f'Market {market.symbol} created')
+            return JsonResponse({'message': f'Market {market.symbol} created'})
         except IntegrityError:
-            return HttpResponse('Market already exists', status=400)
+            return JsonResponse({'message': 'Market already exists'}, status=400)
         except KeyError:
-            return HttpResponse('Symbol not provided', status=400)
+            return JsonResponse({'message': 'Missing required fields'}, status=400)
+
+
+class OrderBookView(View):
+    def get(self, request: HttpRequest):
+        try:
+            market = Market.objects.get(symbol=request.GET['symbol'])
+            order_side = request.GET['order_side']
+            makers = market.get_order_book(order_side)
+            return JsonResponse({'orders': [{'id':order.pk, 'price':order.price, 'remaining amount':order.remaining_amount} for order in makers]})
+        except KeyError:
+            return JsonResponse({'message': 'Missing required fields'}, status=400)
+
 
 class OrderView(View):
     def get(self, request: HttpRequest):
         if 'pk' in request.GET:
             try:
                 order = Order.objects.get(pk=request.GET['pk'])
-                return HttpResponse(f'Order {order.id}')
+                return JsonResponse({'message': f'Order {order.pk}: {order.order_type} {order.order_side} {order.market.symbol} {order.primary_amount} {order.price}'})
             except Order.DoesNotExist:
                 return HttpResponse('Order not found', status=404)
         orders = Order.objects.all()
-        return HttpResponse(', '.join([order.pk for order in orders]))
+        return JsonResponse({'orders': [f'{order.pk}: {order.order_type} {order.order_side} {order.market.symbol} {order.primary_amount} {order.price}' for order in orders]})
 
     def post(self, request: HttpRequest):
         try:
             order_dict = self.make_order_dict(request)
             if order_dict is None:
-                return HttpResponse('Invalid request', status=400)
+                return JsonResponse({'message': 'Invalid value'}, status=400)
             result = handle_new_order.apply_async(args=[order_dict])
             response = result.get(timeout=5)
-            return HttpResponse(response[0], status=response[1])
+            return JsonResponse({'message': response[0]}, status=response[1])
         except IntegrityError:
-            return HttpResponse('Order already exists', status=400)
+            return JsonResponse({'message': 'Order already exists'}, status=400)
         except KeyError:
-            return HttpResponse('Missing required fields', status=400)
+            return JsonResponse({'message': 'Missing required fields'}, status=400)
         except ValueError:
-            return HttpResponse('Invalid value', status=400)
+            return JsonResponse({'message': 'Invalid value'}, status=400)
 
     def make_order_dict(self, request: HttpRequest):
         try:
@@ -81,28 +95,21 @@ class OrderView(View):
 
 
 class TradeView(View):
-    def get(self, request, pk):
-        try:
-            trade = Trade.objects.get(pk=pk)
-            return HttpResponse(f'Trade {trade.id}')
-        except Trade.DoesNotExist:
-            return HttpResponse('Trade not found', status=404)
-
     def get(self, request):
         trades = Trade.objects.all()
-        return HttpResponse(', '.join([trade.pk for trade in trades]))
+        return JsonResponse({'trades': [{'pk':trade.pk, 'maker pk':trade.maker.pk, 'taker pk':trade.taker.pk,  'amount':trade.amount, 'price':trade.price} for trade in trades]})
 
     def post(self, request):
         trade_dict = self.make_trade_dict(request)
         try:
             trade = Trade.objects.create(**trade_dict)
-            return HttpResponse(f'Trade {trade.id} created')
+            return JsonResponse({'message': f'Trade {trade.pk} created'})
         except IntegrityError:
-            return HttpResponse('Trade already exists', status=400)
+            return JsonResponse({'message': 'Trade already exists'}, status=400)
         except KeyError:
-            return HttpResponse('Missing required fields', status=400)
+            return JsonResponse({'message': 'Missing required fields'}, status=400)
         except ValueError:
-            return HttpResponse('Invalid value', status=400)
+            return JsonResponse({'message': 'Invalid value'}, status=400)
 
     def make_trade_dict(self, request):
         try:

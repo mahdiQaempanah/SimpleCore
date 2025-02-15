@@ -15,7 +15,7 @@ def make_orders():
         orders.append({
             'order_type': 'LIMIT',
             'order_side': 'BUY',
-            'market': 2,
+            'market': 1,
             'primary_amount': 1,
             'price': 1000 + _
         })
@@ -23,7 +23,7 @@ def make_orders():
         orders.append({
             'order_type': 'MARKET',
             'order_side': 'SELL',
-            'market': 2,
+            'market': 1,
             'primary_amount': 1,
             'price': 1500
         })
@@ -31,7 +31,7 @@ def make_orders():
         orders.append({
             'order_type': 'LIMIT',
             'order_side': 'SELL',
-            'market': 2,
+            'market': 1,
             'primary_amount': 1,
             'price': 1400 - _
         })
@@ -40,7 +40,7 @@ def make_orders():
 def test(number_of_trials, orders):
     latencies = []
     for _ in range(number_of_trials):
-        latencies.append(measure_latency(orders))
+        latencies.append(measure_latency_multi_thread(orders))
     return latencies
 
 def measure_latency_multi_thread(orders):
