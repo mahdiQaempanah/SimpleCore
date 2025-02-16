@@ -11,7 +11,7 @@ from django.views import View
 from django.http import HttpResponse, HttpRequest, JsonResponse
 from django.db import DatabaseError, transaction
 from .tasks import *
-
+from .utils import ExecutionEvaluator
 
 
 class MarketView(View):
@@ -40,7 +40,7 @@ class OrderBookView(View):
         try:
             market = Market.objects.get(symbol=request.GET['symbol'])
             order_side = request.GET['order_side']
-            makers = market.get_order_book(order_side)
+            makers = market.get_order_book(order_side, True)
             return JsonResponse({'orders': [{'id':order.pk, 'price':order.price, 'remaining amount':order.remaining_amount} for order in makers]})
         except KeyError:
             return JsonResponse({'message': 'Missing required fields'}, status=400)
@@ -59,10 +59,10 @@ class OrderView(View):
 
     def post(self, request: HttpRequest):
         try:
-            order_dict = self.make_order_dict(request)
+            order_dict = OrderView.make_order_dict(request)
             if order_dict is None:
                 return JsonResponse({'message': 'Invalid value'}, status=400)
-            result = handle_new_order.apply_async(args=[order_dict])
+            result = handle_new_order.apply_async(args=[order_dict], queue=f"market_{order_dict['market']}")
             response = result.get(timeout=5)
             return JsonResponse({'message': response[0]}, status=response[1])
         except IntegrityError:
@@ -72,7 +72,8 @@ class OrderView(View):
         except ValueError:
             return JsonResponse({'message': 'Invalid value'}, status=400)
 
-    def make_order_dict(self, request: HttpRequest):
+    @staticmethod
+    def make_order_dict(request: HttpRequest):
         try:
             order_dict = {
                 'order_type': request.POST['order_type'],

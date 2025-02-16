@@ -13,5 +13,6 @@ class OrderStatus(models.TextChoices):
     WAITING = 'WAITING'
     INITIATED = 'INITIATED'
     FILLED = 'FILLED'
+    PARTIALLY_FILLED = 'PARTIALLY_FILLED'
     CANCELED = 'CANCELED'
 
