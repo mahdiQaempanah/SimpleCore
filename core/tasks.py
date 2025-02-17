@@ -12,8 +12,8 @@ from core.utils import ExecutionEvaluator
 
 def make_orm_valid_order_dict(order_dict):
     valid_order_dict = copy.deepcopy(order_dict)
-    market = Market.objects.get(pk=order_dict['market'])
-    valid_order_dict['market'] = market
+    valid_order_dict['market_id'] = order_dict['market']
+    valid_order_dict.pop('market', None)
     valid_order_dict['remaining_amount'] = decimal.Decimal(order_dict['remaining_amount'])
     valid_order_dict['primary_amount'] = decimal.Decimal(order_dict['primary_amount'])
     if order_dict.get('price'):
@@ -22,7 +22,7 @@ def make_orm_valid_order_dict(order_dict):
 
 @shared_task
 def handle_new_order(order_dict):
-    timer_creat_order = ExecutionEvaluator.timer("creat order")
+    timer_creat_order = ExecutionEvaluator.timer("create order")
     timer_fill = ExecutionEvaluator.timer("fill")
     timer_save_based = ExecutionEvaluator.timer("based")
 
